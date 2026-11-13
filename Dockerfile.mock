@@ -1,0 +1,17 @@
+# The synthetic supporter CRM API, with both days of data generated at build time
+# from the same fixed seed the checks use. For demonstrations only.
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
+    MOCK_DATA_PATH=/app/data/day1/api.json
+
+WORKDIR /app
+RUN pip install fastapi==0.162.6 uvicorn==0.54.0
+COPY mock_api/ mock_api/
+COPY scripts/generate_data.py scripts/generate_data.py
+RUN python scripts/generate_data.py --out /app/data \
+ && useradd --uid 10001 runner
+USER runner
+
+EXPOSE 8000
+CMD ["python", "-m", "uvicorn", "mock_api.app:app", "--host", "0.0.0.0", "--port", "8000"]

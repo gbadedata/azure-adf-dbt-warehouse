@@ -57,8 +57,8 @@ locals {
         "dbt source freshness --project-dir /app/dbt && dbt build --project-dir /app/dbt"
       ]
       extra_env = pair[1] == "ingest" ? {
-        CRM_API_BASE_URL        = var.crm_api_base_url
-        CRM_API_CLIENT_ID       = var.crm_client_id
+        CRM_API_BASE_URL        = local.crm_base_url
+        CRM_API_CLIENT_ID       = local.crm_client_id
         INGEST_LOOKBACK_MINUTES = "30"
         } : {
         DBT_TARGET       = pair[0]
@@ -96,7 +96,7 @@ resource "azurerm_container_app_job" "this" {
     for_each = each.value.kind == "ingest" ? [1] : []
     content {
       name  = "crm-client-secret"
-      value = var.crm_client_secret
+      value = local.crm_client_secret
     }
   }
 
@@ -132,6 +132,11 @@ resource "azurerm_container_app_job" "this" {
   # (az containerapp job update), so Terraform does not roll it back.
   lifecycle {
     ignore_changes = [template[0].container[0].image]
+
+    precondition {
+      condition     = var.deploy_demo_source || (var.crm_api_base_url != "" && var.crm_client_id != "" && var.crm_client_secret != "")
+      error_message = "Set crm_api_base_url, crm_client_id and crm_client_secret, or deploy_demo_source = true."
+    }
   }
 
   depends_on = [azurerm_role_assignment.jobs_acr_pull]

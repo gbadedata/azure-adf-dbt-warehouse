@@ -114,3 +114,10 @@ jobs:
           docker run --rm warehouse:ci dbt --version
           docker run --rm -e DBT_TARGET=prod warehouse:ci dbt parse --project-dir /app/dbt --no-partial-parse
           docker run --rm warehouse:ci odbcinst -q -d -n "ODBC Driver 18 for SQL Server"
+      - run: docker build -t mock-crm:ci -f Dockerfile.mock .
+      - name: The demo CRM serves both days
+        run: |
+          docker run -d --name crm -p 8000:8000 mock-crm:ci
+          for i in $(seq 1 20); do curl -fsS localhost:8000/health && break; sleep 1; done
+          docker exec crm ls /app/data/day1/api.json /app/data/day2/api.json
+          docker rm -f crm

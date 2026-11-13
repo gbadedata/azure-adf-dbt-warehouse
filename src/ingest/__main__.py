@@ -4,6 +4,7 @@
     python -m ingest api [--entities ...]    incremental load from the CRM API
     python -m ingest file PATH [PATH ...]    load event-registration CSV exports
     python -m ingest status                  show watermarks and the latest runs
+    python -m ingest run-sql FILE [FILE ...] run T-SQL scripts (GO-separated), e.g. the grants
 
 Exit code 0 means every load succeeded; 1 means at least one failed.
 """
@@ -83,6 +84,23 @@ def cmd_file(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def cmd_run_sql(args: argparse.Namespace) -> int:
+    from .sql_store import split_batches
+
+    store = _store()
+    try:
+        cursor = store.connection.cursor()
+        for path in args.paths:
+            batches = split_batches(Path(path).read_text(encoding="utf-8"))
+            for batch in batches:
+                cursor.execute(batch)
+            store.commit()
+            log.info("script applied", extra={"file": str(path), "batches": len(batches)})
+    finally:
+        store.close()
+    return 0
+
+
 def cmd_status(_: argparse.Namespace) -> int:
     store = _store()
     cursor = store.connection.cursor()
@@ -115,6 +133,9 @@ def main(argv: list[str] | None = None) -> int:
     files.add_argument("paths", nargs="+")
     files.set_defaults(func=cmd_file)
     sub.add_parser("status").set_defaults(func=cmd_status)
+    run_sql = sub.add_parser("run-sql")
+    run_sql.add_argument("paths", nargs="+")
+    run_sql.set_defaults(func=cmd_run_sql)
     args = parser.parse_args(argv)
     return args.func(args)
 

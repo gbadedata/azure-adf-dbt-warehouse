@@ -38,10 +38,27 @@ resource "azurerm_storage_account" "landing" {
   tags                            = var.tags
 }
 
+# Whoever runs Terraform can read and write blobs too: Terraform creates the
+# folder markers below, and the demo script uploads files, with Entra sign-in
+# because shared keys are disabled on this account.
+data "azurerm_client_config" "current" {}
+
+resource "azurerm_role_assignment" "deployer_blob" {
+  scope                = azurerm_storage_account.landing.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
+resource "time_sleep" "deployer_blob" {
+  create_duration = "90s"
+  depends_on      = [azurerm_role_assignment.deployer_blob]
+}
+
 resource "azurerm_storage_container" "landing" {
   name                  = "landing"
   storage_account_id    = azurerm_storage_account.landing.id
   container_access_type = "private"
+  depends_on            = [time_sleep.deployer_blob]
 }
 
 # A marker so each environment's incoming folder exists before the first file arrives.
@@ -52,6 +69,7 @@ resource "azurerm_storage_blob" "incoming_marker" {
   storage_container_name = azurerm_storage_container.landing.name
   type                   = "Block"
   source_content         = "Drop event-registration CSV exports in this folder."
+  depends_on             = [time_sleep.deployer_blob]
 }
 
 # ---- Azure SQL: one serverless database per environment --------------------------

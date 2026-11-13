@@ -15,3 +15,6 @@ infra/terraform/*.tfstate*
 infra/terraform/terraform.tfvars
 infra/terraform/grants_*.sql
 .env
+.venv-deploy/
+infra/terraform/tfplan
+results-azure.json

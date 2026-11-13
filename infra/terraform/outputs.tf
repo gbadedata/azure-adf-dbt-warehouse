@@ -18,6 +18,18 @@ output "container_registry" {
   value = azurerm_container_registry.this.login_server
 }
 
+output "container_registry_name" {
+  value = azurerm_container_registry.this.name
+}
+
+output "subscription_id" {
+  value = var.subscription_id
+}
+
+output "demo_source" {
+  value = var.deploy_demo_source ? { app = azurerm_container_app.demo_source[0].name, url = local.crm_base_url } : null
+}
+
 output "jobs" {
   value = { for key, job in azurerm_container_app_job.this : key => job.name }
 }

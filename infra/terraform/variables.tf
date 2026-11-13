@@ -48,19 +48,34 @@ variable "image" {
 }
 
 variable "crm_api_base_url" {
-  description = "Base URL of the supporter CRM API."
+  description = "Base URL of the supporter CRM API. Leave empty when deploy_demo_source is true."
   type        = string
+  default     = ""
 }
 
 variable "crm_client_id" {
-  description = "OAuth client ID for the CRM API."
+  description = "OAuth client ID for the CRM API. Leave empty when deploy_demo_source is true."
   type        = string
+  default     = ""
 }
 
 variable "crm_client_secret" {
   description = "OAuth client secret for the CRM API. Supply through TF_VAR_crm_client_secret, never a committed file."
   type        = string
+  default     = ""
   sensitive   = true
+}
+
+variable "deploy_demo_source" {
+  description = "Run the synthetic CRM API (mock_api) as a Container App and point the loaders at it, for a self-contained demonstration."
+  type        = bool
+  default     = false
+}
+
+variable "demo_source_image" {
+  description = "Image built from Dockerfile.mock. Required when deploy_demo_source is true."
+  type        = string
+  default     = ""
 }
 
 variable "daily_schedule" {
