@@ -23,10 +23,13 @@ resource "azurerm_monitor_action_group" "data_team" {
   resource_group_name = azurerm_resource_group.this.name
   short_name          = "datateam"
 
-  email_receiver {
-    name                    = "data-team"
-    email_address           = var.alert_email
-    use_common_alert_schema = true
+  dynamic "email_receiver" {
+    for_each = toset(var.alert_emails)
+    content {
+      name                    = "email-${index(var.alert_emails, email_receiver.value)}"
+      email_address           = email_receiver.value
+      use_common_alert_schema = true
+    }
   }
 
   tags = var.tags

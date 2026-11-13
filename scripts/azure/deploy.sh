@@ -2,7 +2,7 @@
 # Deploy the warehouse to your own Azure subscription, with the synthetic CRM API
 # as its source, so the whole thing can be run and checked in Azure.
 #
-#   ALERT_EMAIL=you@example.org bash scripts/azure/deploy.sh
+#   ALERT_EMAILS=you@example.org,team@example.org bash scripts/azure/deploy.sh
 #
 # Needs: Azure CLI (signed in), Terraform >= 1.6, Python 3.11+ with venv, curl.
 # Installs Microsoft ODBC Driver 18 if it is missing (asks for sudo).
@@ -11,7 +11,8 @@ set -euo pipefail
 export AZURE_EXTENSION_USE_DYNAMIC_INSTALL=yes_without_prompt
 cd "$(dirname "$0")/../.."
 ROOT="$PWD"
-: "${ALERT_EMAIL:?set ALERT_EMAIL to the address that should receive alerts}"
+: "${ALERT_EMAILS:?set ALERT_EMAILS to one or more addresses, comma-separated, for alerts}"
+EMAIL_LIST="$(python3 -c "import json,sys; print(json.dumps([e.strip() for e in sys.argv[1].split(',') if e.strip()]))" "$ALERT_EMAILS")"
 LOCATION="${LOCATION:-uksouth}"
 step() { printf '\n==> %s\n' "$*"; }
 
@@ -29,6 +30,7 @@ echo "subscription : $SUB_NAME ($SUB)"
 echo "SQL admin    : $ME_NAME"
 echo "your IP      : $MY_IP (allowed through the SQL firewall)"
 echo "region       : $LOCATION"
+echo "alerts to    : $EMAIL_LIST"
 read -r -p "Deploy into this subscription? [y/N] " answer
 [ "$answer" = "y" ] || { echo "stopped"; exit 1; }
 
@@ -48,7 +50,7 @@ location            = "$LOCATION"
 sql_admin_login     = "$ME_NAME"
 sql_admin_object_id = "$ME_ID"
 client_ip_addresses = ["$MY_IP"]
-alert_email         = "$ALERT_EMAIL"
+alert_emails        = $EMAIL_LIST
 deploy_demo_source  = true
 # Schedules stay off for the demonstration: demo_run.sh starts each run itself.
 daily_schedule = {

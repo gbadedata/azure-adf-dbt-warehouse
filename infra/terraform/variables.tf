@@ -36,9 +36,14 @@ variable "client_ip_addresses" {
   default     = []
 }
 
-variable "alert_email" {
-  description = "Where failure and staleness alerts are sent."
-  type        = string
+variable "alert_emails" {
+  description = "Where failure and staleness alerts are sent. One or more addresses."
+  type        = list(string)
+
+  validation {
+    condition     = length(var.alert_emails) > 0 && alltrue([for e in var.alert_emails : can(regex("^[^@ ]+@[^@ ]+\\.[^@ ]+$", e))])
+    error_message = "alert_emails needs at least one valid email address."
+  }
 }
 
 variable "image" {
