@@ -63,7 +63,7 @@ resource "azurerm_storage_container" "landing" {
 
 # A marker so each environment's incoming folder exists before the first file arrives.
 resource "azurerm_storage_blob" "incoming_marker" {
-  for_each               = local.environments
+  for_each             = local.environments
   name                 = "${each.key}/incoming/event_registrations/.keep"
   storage_container_id = azurerm_storage_container.landing.id
   type                 = "Block"
