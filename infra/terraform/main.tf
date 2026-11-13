@@ -64,12 +64,11 @@ resource "azurerm_storage_container" "landing" {
 # A marker so each environment's incoming folder exists before the first file arrives.
 resource "azurerm_storage_blob" "incoming_marker" {
   for_each               = local.environments
-  name                   = "${each.key}/incoming/event_registrations/.keep"
-  storage_account_name   = azurerm_storage_account.landing.name
-  storage_container_name = azurerm_storage_container.landing.name
-  type                   = "Block"
-  source_content         = "Drop event-registration CSV exports in this folder."
-  depends_on             = [time_sleep.deployer_blob]
+  name                 = "${each.key}/incoming/event_registrations/.keep"
+  storage_container_id = azurerm_storage_container.landing.id
+  type                 = "Block"
+  source_content       = "Drop event-registration CSV exports in this folder."
+  depends_on           = [time_sleep.deployer_blob]
 }
 
 # ---- Azure SQL: one serverless database per environment --------------------------

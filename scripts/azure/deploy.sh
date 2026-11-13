@@ -34,6 +34,18 @@ echo "alerts to    : $EMAIL_LIST"
 read -r -p "Deploy into this subscription? [y/N] " answer
 [ "$answer" = "y" ] || { echo "stopped"; exit 1; }
 
+step "Registering the Azure resource providers this uses (safe to repeat)"
+for namespace in Microsoft.App Microsoft.DataFactory Microsoft.Sql Microsoft.Storage \
+                 Microsoft.ContainerRegistry Microsoft.OperationalInsights Microsoft.ManagedIdentity \
+                 Microsoft.Insights Microsoft.AlertsManagement; do
+  state="$(az provider show --namespace "$namespace" --query registrationState -o tsv 2>/dev/null || echo NotRegistered)"
+  if [ "$state" != "Registered" ]; then
+    echo "registering $namespace (can take a few minutes)"
+    az provider register --namespace "$namespace" --wait
+  fi
+done
+echo "all registered"
+
 step "Python environment for the database steps"
 if ! odbcinst -q -d -n "ODBC Driver 18 for SQL Server" >/dev/null 2>&1; then
   bash scripts/ci/install_odbc.sh
@@ -78,6 +90,10 @@ echo "registry: $ACR_SERVER, tag: $TAG"
 
 step "Building both images"
 build_image() {  # name dockerfile
+  if az acr repository show-tags --name "$ACR" --repository "$1" --query "contains(@, '$TAG')" -o tsv 2>/dev/null | grep -q true; then
+    echo "$1:$TAG is already in the registry"
+    return 0
+  fi
   if az acr build --registry "$ACR" --image "$1:$TAG" --file "$ROOT/$2" "$ROOT"; then
     return 0
   fi
