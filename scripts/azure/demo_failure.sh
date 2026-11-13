@@ -26,7 +26,7 @@ step "Checking the file was kept for the next run"
 az storage blob list --auth-mode login --account-name "$STORAGE" --container-name landing \
   --prefix "$INCOMING/" --query "[].name" -o tsv --only-show-errors
 
-step "Waiting for the failure alert (usually 2 to 5 minutes)"
+step "Waiting for the failure alert (usually 3 to 7 minutes)"
 since="$(date -u +%FT%TZ -d '-15 minutes')"
 for _ in $(seq 1 20); do
   fired="$(az rest --method get \

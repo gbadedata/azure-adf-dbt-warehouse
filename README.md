@@ -21,11 +21,11 @@ The data is **synthetic**, generated from a fixed seed. No real organisation or 
 
 ## Proof
 
-Deployed to Azure on 13 November 2026, run three times (day one, day two, then day two again), checked against the source, then removed. [Full record](docs/evidence/azure-2026-11-13.md).
+Deployed to Azure twice on 13 November 2026. Each time the daily pipeline ran three times (day one, day two, then day two again) and was checked against the source, with identical results, and then everything was removed. [Full record](docs/evidence/azure-2026-11-13.md).
 
-| 3 of 3 | 100 of 100 | 4 of 4 | 0 | 2 min |
+| 3 of 3 | 100 of 100 | 4 of 4 | 0 | 3 to 7 min |
 |:---:|:---:|:---:|:---:|:---:|
-| daily Data Factory runs succeeded | campaign figures in the prod marts matching an independent recalculation from the source | late-arriving donations caught | rows changed by the replayed day | from a failed run to the alert firing |
+| daily Data Factory runs succeeded, in both deployments | campaign figures in the prod marts matching an independent recalculation from the source | late-arriving donations caught | rows changed by the replayed day | from a failed run to the alert firing |
 
 <table>
 <tr>
@@ -42,7 +42,7 @@ The same checks run in CI on every push, against SQL Server 2022, and give ident
 
 **The late donations are the hard part.** Four donations are stamped eight minutes *before* the day-one high watermark but only become visible on day two, as happens when a source commits late. A loader that asks for "everything after the watermark" never sees them. This one re-reads a 30-minute overlap, and the merge only accepts strictly newer versions, so the overlap re-reads one row and loses nothing. [A test](tests/test_pipeline.py) shows the same load without the overlap losing exactly those four.
 
-**A failure was tested for real.** In the first deployment a file load failed. dbt was held back, so the reports kept the last good data; the file stayed in `incoming` for the next run; and the failure alert fired two minutes later.
+**Failures were tested for real**, three times: once by a defect in the first deployment, and twice on purpose in the second, by uploading a malformed file ([`demo_failure.sh`](scripts/azure/demo_failure.sh)). Each time dbt was held back, so the reports kept the last good data; the file stayed in `incoming` for the next run; and the failure alert fired 3 to 7 minutes later.
 
 **The first deployment found three problems no CI check could see**, each now fixed:
 
@@ -178,10 +178,10 @@ The biggest lever is the auto-pause delay. The database keeps billing for the ho
 | End to end: two days, replay, independent recalculation | CI on every push, and **once in Azure** |
 | Terraform | `fmt` and `validate` in CI; **applied** in UK South, then destroyed |
 | Data Factory pipelines | Static checks in CI; **ran in Azure**, including a failure that held dbt back and kept the file |
-| Failure alert | **Fired in Azure**, two minutes after a failed run |
+| Failure alert | **Fired in Azure** for all three failed runs, 3 to 7 minutes after each |
 | Silence alert (no success in 26 hours) | Deployed, **not exercised**: the schedules were off for the demonstration |
 | Azure DevOps pipelines | Written to mirror the GitHub workflow; **not yet run** in an Azure DevOps organisation |
-| Weeks on a daily schedule, with a real source | **Not done**: the deployment lasted an afternoon |
+| Weeks on a daily schedule, with a real source | **Not done**: each deployment lasted a couple of hours |
 
 ## Decisions and limits
 
