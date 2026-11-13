@@ -1,0 +1,116 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  SA_PASSWORD: CiPassw0rd2026x   # throwaway SQL Server container, not a secret
+
+jobs:
+  checks:
+    name: Lint, unit tests, pipeline checks, dbt parse
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: bash scripts/ci/install_odbc.sh
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: ruff format --check .
+      - name: Unit tests and Data Factory pipeline checks
+        run: pytest -m "not sqlserver"
+      - name: dbt parse (prod and ci targets)
+        working-directory: dbt
+        env:
+          DBT_PROFILES_DIR: .
+        run: |
+          DBT_TARGET=prod dbt parse --no-partial-parse --warn-error
+          DBT_TARGET=ci dbt parse --no-partial-parse --warn-error
+
+  end_to_end:
+    name: End to end on SQL Server 2022
+    runs-on: ubuntu-24.04
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: CiPassw0rd2026x
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P CiPassw0rd2026x -C -Q 'SELECT 1' -b"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SQL_SERVER: localhost
+      SQL_USER: sa
+      SQL_PASSWORD: CiPassw0rd2026x
+      SQLSERVER_TEST_SERVER: localhost
+      SQLSERVER_TEST_USER: sa
+      SQLSERVER_TEST_PASSWORD: CiPassw0rd2026x
+      RUN_ID: ${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: bash scripts/ci/install_odbc.sh
+      - run: pip install -r requirements-dev.txt
+      - name: Loader integration tests (MERGE, watermarks, run log, file upserts)
+        run: pytest -m sqlserver -v
+      - name: Two days of loads, a replay, dbt build, and an independent check
+        run: bash scripts/run_e2e.sh
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: end-to-end-results
+          path: |
+            results.json
+            dbt/target/run_results.json
+            dbt/target/sources.json
+          if-no-files-found: warn
+
+  terraform:
+    name: Terraform fmt and validate
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - run: terraform fmt -check -recursive -diff
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
+  image:
+    name: Build the job image and smoke-test it
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t warehouse:ci .
+      - name: Both entry points start
+        run: |
+          docker run --rm warehouse:ci python -m ingest --help
+          docker run --rm warehouse:ci dbt --version
+          docker run --rm -e DBT_TARGET=prod warehouse:ci dbt parse --project-dir /app/dbt --no-partial-parse
+          docker run --rm warehouse:ci odbcinst -q -d -n "ODBC Driver 18 for SQL Server"

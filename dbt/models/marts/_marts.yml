@@ -1,0 +1,67 @@
+version: 2
+
+models:
+  - name: dim_campaigns
+    description: One row per campaign.
+    columns:
+      - name: campaign_id
+        data_tests: [unique, not_null]
+
+  - name: dim_supporters
+    description: One row per supporter, with giving totals. No personal contact data.
+    columns:
+      - name: supporter_id
+        data_tests: [unique, not_null]
+      - name: acquisition_campaign_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_campaigns')
+                field: campaign_id
+
+  - name: fct_donations
+    description: One row per donation in its latest state. Net income counts paid gifts only.
+    columns:
+      - name: donation_id
+        data_tests: [unique, not_null]
+      - name: supporter_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_supporters')
+                field: supporter_id
+      - name: campaign_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_campaigns')
+                field: campaign_id
+      - name: net_amount_gbp
+        data_tests: [not_null]
+
+  - name: fct_event_registrations
+    description: One row per event registration; supporter_id is null for people not in the CRM.
+    columns:
+      - name: registration_id
+        data_tests: [unique, not_null]
+      - name: campaign_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_campaigns')
+                field: campaign_id
+      - name: supporter_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_supporters')
+                field: supporter_id
+
+  - name: mart_campaign_performance
+    description: >
+      Income, refunds, Gift Aid, supporters and event sign-ups per campaign, against budget.
+      gross_gbp counts paid and later-refunded gifts; net_gbp counts paid gifts only.
+    columns:
+      - name: campaign_id
+        data_tests: [unique, not_null]

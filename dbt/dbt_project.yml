@@ -1,0 +1,29 @@
+name: charity_warehouse
+version: "1.0.0"
+config-version: 2
+profile: warehouse
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: target
+clean-targets: ["target", "logs"]
+
+vars:
+  gift_aid_rate: 0.25
+
+models:
+  charity_warehouse:
+    staging:
+      +schema: staging
+      +materialized: view
+    intermediate:
+      +schema: intermediate
+      +materialized: view
+    marts:
+      +schema: marts
+      +materialized: table
+
+data_tests:
+  charity_warehouse:
+    +store_failures: false

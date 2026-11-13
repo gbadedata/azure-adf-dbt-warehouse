@@ -1,0 +1,37 @@
+[
+  {
+    "name": "LoadCrmApi",
+    "description": "Incremental load of campaigns, supporters and donations from the CRM API.",
+    "type": "ExecutePipeline",
+    "dependsOn": [],
+    "typeProperties": {
+      "pipeline": { "referenceName": "pl_run_job_${env}", "type": "PipelineReference" },
+      "waitOnCompletion": true,
+      "parameters": { "job_name": "${ingest_job}" }
+    }
+  },
+  {
+    "name": "LoadEventFiles",
+    "description": "Upsert any new event-registration exports.",
+    "type": "ExecutePipeline",
+    "dependsOn": [],
+    "typeProperties": {
+      "pipeline": { "referenceName": "pl_load_event_files_${env}", "type": "PipelineReference" },
+      "waitOnCompletion": true
+    }
+  },
+  {
+    "name": "BuildDbt",
+    "description": "dbt source freshness, then dbt build (models and tests). Only runs when both loads succeeded.",
+    "type": "ExecutePipeline",
+    "dependsOn": [
+      { "activity": "LoadCrmApi", "dependencyConditions": [ "Succeeded" ] },
+      { "activity": "LoadEventFiles", "dependencyConditions": [ "Succeeded" ] }
+    ],
+    "typeProperties": {
+      "pipeline": { "referenceName": "pl_run_job_${env}", "type": "PipelineReference" },
+      "waitOnCompletion": true,
+      "parameters": { "job_name": "${dbt_job}" }
+    }
+  }
+]

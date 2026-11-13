@@ -1,0 +1,24 @@
+[project]
+name = "azure-adf-dbt-warehouse"
+version = "1.0.0"
+description = "Data Factory loads into Azure SQL, dbt with dev and prod environments, alerts and a handover pack"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "src", "tests"]
+markers = ["sqlserver: needs a SQL Server instance (set SQLSERVER_TEST_SERVER)"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["dbt/target", "dbt/logs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["B008"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ingest", "mock_api", "conftest"]

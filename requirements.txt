@@ -1,0 +1,6 @@
+# Runtime: what the Container Apps jobs need.
+httpx==0.28.1
+pyodbc==5.5.0
+azure-identity==1.27.0
+dbt-core==1.12.7
+dbt-sqlserver==1.12.2

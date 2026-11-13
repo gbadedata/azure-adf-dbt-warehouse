@@ -1,0 +1,13 @@
+.git
+.github
+azure-pipelines
+infra
+docs
+tests
+data
+mock_api
+scripts
+**/__pycache__
+dbt/target
+dbt/logs
+*.md

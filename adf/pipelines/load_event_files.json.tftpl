@@ -1,0 +1,122 @@
+[
+  {
+    "name": "ListIncomingFiles",
+    "type": "GetMetadata",
+    "dependsOn": [],
+    "policy": { "timeout": "0.00:10:00", "retry": 2, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
+    "typeProperties": {
+      "dataset": { "referenceName": "ds_incoming_folder_${env}", "type": "DatasetReference" },
+      "fieldList": [ "childItems" ],
+      "storeSettings": { "type": "AzureBlobStorageReadSettings", "recursive": true, "enablePartitionDiscovery": false },
+      "formatSettings": { "type": "BinaryReadSettings" }
+    }
+  },
+  {
+    "name": "OnlyCsvFiles",
+    "type": "Filter",
+    "dependsOn": [ { "activity": "ListIncomingFiles", "dependencyConditions": [ "Succeeded" ] } ],
+    "typeProperties": {
+      "items": { "value": "@activity('ListIncomingFiles').output.childItems", "type": "Expression" },
+      "condition": {
+        "value": "@and(equals(item().type, 'File'), endswith(toLower(item().name), '.csv'))",
+        "type": "Expression"
+      }
+    }
+  },
+  {
+    "name": "ForEachFile",
+    "description": "One file at a time, so two loads never write the same rows at once.",
+    "type": "ForEach",
+    "dependsOn": [ { "activity": "OnlyCsvFiles", "dependencyConditions": [ "Succeeded" ] } ],
+    "typeProperties": {
+      "isSequential": true,
+      "items": { "value": "@activity('OnlyCsvFiles').output.value", "type": "Expression" },
+      "activities": [
+        {
+          "name": "UpsertRegistrations",
+          "type": "Copy",
+          "dependsOn": [],
+          "policy": { "timeout": "0.01:00:00", "retry": 2, "retryIntervalInSeconds": 60, "secureOutput": false, "secureInput": false },
+          "inputs": [
+            {
+              "referenceName": "ds_registrations_csv_${env}",
+              "type": "DatasetReference",
+              "parameters": { "file_name": { "value": "@item().name", "type": "Expression" } }
+            }
+          ],
+          "outputs": [ { "referenceName": "ds_sql_event_registrations_${env}", "type": "DatasetReference" } ],
+          "typeProperties": {
+            "source": {
+              "type": "DelimitedTextSource",
+              "storeSettings": { "type": "AzureBlobStorageReadSettings", "recursive": false, "enablePartitionDiscovery": false },
+              "formatSettings": { "type": "DelimitedTextReadSettings" },
+              "additionalColumns": [
+                { "name": "_source_file", "value": { "value": "@item().name", "type": "Expression" } },
+                { "name": "_last_loaded_at", "value": { "value": "@formatDateTime(utcNow(), 'yyyy-MM-dd HH:mm:ss.fff')", "type": "Expression" } }
+              ]
+            },
+            "sink": {
+              "type": "AzureSqlSink",
+              "writeBehavior": "upsert",
+              "upsertSettings": { "useTempDB": true, "keys": [ "registration_id" ] },
+              "sqlWriterUseTableLock": false
+            },
+            "enableStaging": false,
+            "translator": {
+              "type": "TabularTranslator",
+              "typeConversion": true,
+              "mappings": [
+                { "source": { "name": "registration_id" }, "sink": { "name": "registration_id" } },
+                { "source": { "name": "event_name" }, "sink": { "name": "event_name" } },
+                { "source": { "name": "event_date" }, "sink": { "name": "event_date" } },
+                { "source": { "name": "campaign_id" }, "sink": { "name": "campaign_id" } },
+                { "source": { "name": "supporter_email" }, "sink": { "name": "supporter_email" } },
+                { "source": { "name": "registered_at" }, "sink": { "name": "registered_at" } },
+                { "source": { "name": "ticket_type" }, "sink": { "name": "ticket_type" } },
+                { "source": { "name": "fundraising_target_gbp" }, "sink": { "name": "fundraising_target_gbp" } },
+                { "source": { "name": "_source_file" }, "sink": { "name": "_source_file" } },
+                { "source": { "name": "_last_loaded_at" }, "sink": { "name": "_last_loaded_at" } }
+              ]
+            }
+          }
+        },
+        {
+          "name": "ArchiveFile",
+          "description": "Copy the loaded file to archive/yyyy/MM/dd and delete it from incoming. Runs only after a successful upsert, so a failed file stays put for the next run.",
+          "type": "Copy",
+          "dependsOn": [ { "activity": "UpsertRegistrations", "dependencyConditions": [ "Succeeded" ] } ],
+          "policy": { "timeout": "0.00:30:00", "retry": 2, "retryIntervalInSeconds": 60, "secureOutput": false, "secureInput": false },
+          "inputs": [
+            {
+              "referenceName": "ds_incoming_file_${env}",
+              "type": "DatasetReference",
+              "parameters": { "file_name": { "value": "@item().name", "type": "Expression" } }
+            }
+          ],
+          "outputs": [
+            {
+              "referenceName": "ds_archive_file_${env}",
+              "type": "DatasetReference",
+              "parameters": {
+                "folder": { "value": "@concat('${env}/archive/event_registrations/', formatDateTime(utcNow(), 'yyyy/MM/dd'))", "type": "Expression" },
+                "file_name": { "value": "@item().name", "type": "Expression" }
+              }
+            }
+          ],
+          "typeProperties": {
+            "source": {
+              "type": "BinarySource",
+              "storeSettings": { "type": "AzureBlobStorageReadSettings", "recursive": false, "deleteFilesAfterCompletion": true },
+              "formatSettings": { "type": "BinaryReadSettings" }
+            },
+            "sink": {
+              "type": "BinarySink",
+              "storeSettings": { "type": "AzureBlobStorageWriteSettings" }
+            },
+            "enableStaging": false
+          }
+        }
+      ]
+    }
+  }
+]

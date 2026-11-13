@@ -1,0 +1,88 @@
+# Release in Azure DevOps: build the image once, deploy it to dev and prove it
+# with a real dbt run there, then deploy the same image to prod after approval.
+#
+# Needs:
+#   service connection  sc-warehouse          (workload identity federation; Contributor on the resource group)
+#   variable group      warehouse-deploy      RESOURCE_GROUP, ACR_NAME, ACR_LOGIN_SERVER, NAME_SUFFIX
+#   environments        warehouse-dev, warehouse-prod (add an Approvals check on warehouse-prod)
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    exclude: [README.md, docs/*]
+
+pr: none
+
+pool:
+  vmImage: ubuntu-24.04
+
+variables:
+  - group: warehouse-deploy
+  - name: IMAGE_TAG
+    value: $(Build.SourceVersion)
+
+stages:
+  - stage: build
+    displayName: Build image
+    jobs:
+      - job: image
+        steps:
+          - task: AzureCLI@2
+            displayName: az acr build
+            inputs:
+              azureSubscription: sc-warehouse
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az acr build --registry "$(ACR_NAME)" --image "warehouse:$(IMAGE_TAG)" --file Dockerfile .
+
+  - stage: deploy_dev
+    displayName: Deploy to dev
+    dependsOn: build
+    jobs:
+      - deployment: dev
+        environment: warehouse-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - task: AzureCLI@2
+                  displayName: Point the dev jobs at the new image, then run dbt
+                  inputs:
+                    azureSubscription: sc-warehouse
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      for kind in ingest dbt; do
+                        az containerapp job update --name "caj-${kind}-dev-$(NAME_SUFFIX)" \
+                          --resource-group "$(RESOURCE_GROUP)" --image "$(ACR_LOGIN_SERVER)/warehouse:$(IMAGE_TAG)"
+                      done
+                      bash scripts/ci/run_container_job.sh "caj-dbt-dev-$(NAME_SUFFIX)" "$(RESOURCE_GROUP)" 45
+
+  - stage: deploy_prod
+    displayName: Deploy to prod
+    dependsOn: deploy_dev
+    jobs:
+      - deployment: prod
+        environment: warehouse-prod   # approval check lives on this environment
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - task: AzureCLI@2
+                  displayName: Point the prod jobs at the new image
+                  inputs:
+                    azureSubscription: sc-warehouse
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      for kind in ingest dbt; do
+                        az containerapp job update --name "caj-${kind}-prod-$(NAME_SUFFIX)" \
+                          --resource-group "$(RESOURCE_GROUP)" --image "$(ACR_LOGIN_SERVER)/warehouse:$(IMAGE_TAG)"
+                      done
+                      echo "Prod picks up the new image at the next scheduled run."

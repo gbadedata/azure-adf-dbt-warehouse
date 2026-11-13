@@ -1,0 +1,36 @@
+version: 2
+
+sources:
+  - name: crm
+    description: Supporter CRM, loaded incrementally from its REST API by the ingest job. One JSON payload per record.
+    schema: raw
+    loaded_at_field: _last_loaded_at
+    freshness:
+      warn_after: { count: 26, period: hour }
+      error_after: { count: 50, period: hour }
+    tables:
+      - name: crm_campaigns
+        columns:
+          - name: record_id
+            data_tests: [unique, not_null]
+      - name: crm_supporters
+        columns:
+          - name: record_id
+            data_tests: [unique, not_null]
+      - name: crm_donations
+        columns:
+          - name: record_id
+            data_tests: [unique, not_null]
+
+  - name: events
+    description: Event-registration CSV exports, upserted on registration_id by Data Factory.
+    schema: raw
+    loaded_at_field: _last_loaded_at
+    freshness:
+      warn_after: { count: 26, period: hour }
+      error_after: { count: 50, period: hour }
+    tables:
+      - name: event_registrations
+        columns:
+          - name: registration_id
+            data_tests: [unique, not_null]

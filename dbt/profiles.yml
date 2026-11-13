@@ -1,0 +1,58 @@
+# No secrets live in this file: every value comes from the environment.
+#
+#   local  a developer's own schema in the dev database, signed in with `az login`
+#   ci     a throwaway schema in CI (SQL Server container, SQL login)
+#   dev    the deployed dev environment: its own database, managed identity
+#   prod   the deployed prod environment: its own database, managed identity
+warehouse:
+  target: "{{ env_var('DBT_TARGET', 'local') }}"
+  outputs:
+    local:
+      type: sqlserver
+      driver: "{{ env_var('SQL_ODBC_DRIVER', 'ODBC Driver 18 for SQL Server') }}"
+      server: "{{ env_var('SQL_SERVER', 'localhost') }}"
+      port: 1433
+      database: "{{ env_var('SQL_DATABASE', 'sqldb-warehouse-dev') }}"
+      schema: "{{ env_var('DBT_SCHEMA', 'dbt_' ~ env_var('DBT_USER', 'developer')) }}"
+      authentication: cli
+      encrypt: true
+      trust_cert: false
+      threads: 4
+
+    ci:
+      type: sqlserver
+      driver: "{{ env_var('SQL_ODBC_DRIVER', 'ODBC Driver 18 for SQL Server') }}"
+      server: "{{ env_var('SQL_SERVER', 'localhost') }}"
+      port: 1433
+      database: "{{ env_var('SQL_DATABASE', 'warehouse_ci') }}"
+      schema: "{{ env_var('DBT_SCHEMA', 'ci') }}"
+      authentication: sql
+      user: "{{ env_var('SQL_USER', 'sa') }}"
+      password: "{{ env_var('SQL_PASSWORD', '') }}"
+      encrypt: true
+      trust_cert: true
+      threads: 4
+
+    dev:
+      type: sqlserver
+      driver: "{{ env_var('SQL_ODBC_DRIVER', 'ODBC Driver 18 for SQL Server') }}"
+      server: "{{ env_var('SQL_SERVER', 'localhost') }}"
+      port: 1433
+      database: "{{ env_var('SQL_DATABASE', 'sqldb-warehouse-dev') }}"
+      schema: analytics
+      authentication: auto
+      encrypt: true
+      trust_cert: false
+      threads: 4
+
+    prod:
+      type: sqlserver
+      driver: "{{ env_var('SQL_ODBC_DRIVER', 'ODBC Driver 18 for SQL Server') }}"
+      server: "{{ env_var('SQL_SERVER', 'localhost') }}"
+      port: 1433
+      database: "{{ env_var('SQL_DATABASE', 'sqldb-warehouse-prod') }}"
+      schema: analytics
+      authentication: auto
+      encrypt: true
+      trust_cert: false
+      threads: 4

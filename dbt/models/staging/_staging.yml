@@ -1,0 +1,79 @@
+version: 2
+
+models:
+  - name: stg_crm__campaigns
+    description: One row per campaign, typed from the CRM payload.
+    columns:
+      - name: campaign_id
+        data_tests: [unique, not_null]
+      - name: budget_gbp
+        data_tests: [not_null]
+      - name: channel
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["website", "email", "search", "events", "social", "partnerships", "audio"]
+
+  - name: stg_crm__supporters
+    description: >
+      One row per supporter. Holds the email address, so the staging schema is
+      restricted to the transformation identity; analysts read marts only.
+    columns:
+      - name: supporter_id
+        data_tests: [unique, not_null]
+      - name: email
+        description: Personal data. Never selected into a mart.
+        meta: { contains_pii: true }
+      - name: email_hash
+        description: SHA-256 of the normalised email, for matching other sources. Also personal data.
+        meta: { contains_pii: true }
+      - name: created_at
+        data_tests: [not_null]
+      - name: acquisition_campaign_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_crm__campaigns')
+                field: campaign_id
+
+  - name: stg_crm__donations
+    description: One row per donation, in its latest state (a refund updates the original row).
+    columns:
+      - name: donation_id
+        data_tests: [unique, not_null]
+      - name: amount_gbp
+        description: Null here means the source sent an amount that is not a number.
+        data_tests: [not_null]
+      - name: currency
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["GBP"]
+      - name: donation_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["paid", "pending", "refunded"]
+      - name: received_at
+        data_tests: [not_null]
+      - name: supporter_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_crm__supporters')
+                field: supporter_id
+
+  - name: stg_events__registrations
+    description: One row per event registration from the events platform's CSV exports.
+    columns:
+      - name: registration_id
+        data_tests: [unique, not_null]
+      - name: email
+        meta: { contains_pii: true }
+      - name: email_hash
+        meta: { contains_pii: true }
+      - name: event_date
+        data_tests: [not_null]
+      - name: registered_at
+        data_tests: [not_null]

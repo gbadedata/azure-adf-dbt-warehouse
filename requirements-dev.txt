@@ -1,0 +1,6 @@
+-r requirements.txt
+# The stand-in CRM API, tests and linting.
+fastapi==0.162.6
+uvicorn==0.54.0
+pytest==9.1.1
+ruff==0.17.5

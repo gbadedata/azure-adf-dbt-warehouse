@@ -1,0 +1,29 @@
+-- Run in the ${database} database as the Entra admin of the server, once after the
+-- first `terraform apply` (for example in the Query editor, or with
+-- `sqlcmd -G -S ${server} -d ${database} -i grants_${env}.sql`).
+-- Safe to run again.
+
+-- Data Factory: writes event registrations into raw.
+IF DATABASE_PRINCIPAL_ID(N'${adf_name}') IS NULL
+    CREATE USER [${adf_name}] FROM EXTERNAL PROVIDER;
+GRANT SELECT, INSERT, UPDATE ON SCHEMA::raw TO [${adf_name}];
+GO
+
+-- Jobs identity: runs the API loader (raw, ctl) and dbt (creates its own schemas).
+IF DATABASE_PRINCIPAL_ID(N'${jobs_identity}') IS NULL
+    CREATE USER [${jobs_identity}] FROM EXTERNAL PROVIDER;
+ALTER ROLE db_ddladmin ADD MEMBER [${jobs_identity}];
+ALTER ROLE db_datareader ADD MEMBER [${jobs_identity}];
+ALTER ROLE db_datawriter ADD MEMBER [${jobs_identity}];
+GO
+
+-- Analysts: read the marts schema only. Staging holds email addresses.
+IF DATABASE_PRINCIPAL_ID(N'analytics_reader') IS NULL
+    CREATE ROLE analytics_reader;
+IF SCHEMA_ID(N'marts') IS NULL
+    EXEC(N'CREATE SCHEMA marts');
+GRANT SELECT ON SCHEMA::marts TO analytics_reader;
+GO
+-- Then add the analytics team's Entra group, for example:
+-- CREATE USER [Data Analytics Team] FROM EXTERNAL PROVIDER;
+-- ALTER ROLE analytics_reader ADD MEMBER [Data Analytics Team];

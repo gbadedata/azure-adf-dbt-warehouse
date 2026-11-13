@@ -1,0 +1,123 @@
+# Pull-request validation in Azure DevOps. Mirrors .github/workflows/ci.yml, then
+# builds the changed dbt project against the dev database in a throwaway schema.
+#
+# Needs: a service connection "sc-warehouse-dev" (workload identity federation)
+# whose identity has a user in the dev database (see docs/runbook.md, "Access"),
+# and a variable group "warehouse-dev" with SQL_SERVER and SQL_DATABASE.
+
+trigger: none
+
+pr:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-24.04
+
+variables:
+  - group: warehouse-dev
+  - name: PYTHON_VERSION
+    value: "3.12"
+  - name: SA_PASSWORD
+    value: CiPassw0rd2026x  # throwaway SQL Server container, not a secret
+
+resources:
+  containers:
+    - container: mssql
+      image: mcr.microsoft.com/mssql/server:2022-latest
+      env:
+        ACCEPT_EULA: "Y"
+        MSSQL_SA_PASSWORD: CiPassw0rd2026x
+      ports:
+        - 1433:1433
+
+stages:
+  - stage: test
+    displayName: Tests
+    jobs:
+      - job: checks
+        displayName: Lint, unit tests, pipeline checks, dbt parse
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(PYTHON_VERSION)
+          - script: bash scripts/ci/install_odbc.sh
+            displayName: ODBC driver
+          - script: pip install -r requirements-dev.txt
+            displayName: Install
+          - script: ruff check . && ruff format --check .
+            displayName: Lint
+          - script: pytest -m "not sqlserver" --junitxml=unit-results.xml
+            displayName: Unit tests
+          - task: PublishTestResults@2
+            condition: always()
+            inputs:
+              testResultsFiles: unit-results.xml
+          - script: |
+              cd dbt
+              DBT_PROFILES_DIR=. DBT_TARGET=prod dbt parse --no-partial-parse --warn-error
+            displayName: dbt parse
+
+      - job: end_to_end
+        displayName: End to end on SQL Server 2022
+        services:
+          mssql: mssql
+        variables:
+          SQL_SERVER: localhost
+          SQL_USER: sa
+          SQL_PASSWORD: $(SA_PASSWORD)
+          SQLSERVER_TEST_SERVER: localhost
+          SQLSERVER_TEST_USER: sa
+          SQLSERVER_TEST_PASSWORD: $(SA_PASSWORD)
+          RUN_ID: $(Build.BuildId)
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(PYTHON_VERSION)
+          - script: bash scripts/ci/install_odbc.sh
+            displayName: ODBC driver
+          - script: pip install -r requirements-dev.txt
+            displayName: Install
+          - script: |
+              for i in $(seq 1 30); do
+                python -c "import pyodbc; pyodbc.connect('Driver={ODBC Driver 18 for SQL Server};Server=localhost;UID=sa;PWD=$(SA_PASSWORD);TrustServerCertificate=yes', timeout=5)" && exit 0
+                sleep 5
+              done
+              exit 1
+            displayName: Wait for SQL Server
+          - script: pytest -m sqlserver --junitxml=integration-results.xml
+            displayName: Loader integration tests
+          - script: bash scripts/run_e2e.sh
+            displayName: Two days of loads, a replay, dbt build, independent check
+          - task: PublishTestResults@2
+            condition: always()
+            inputs:
+              testResultsFiles: integration-results.xml
+          - publish: results.json
+            artifact: end-to-end-results
+            condition: always()
+
+  - stage: dbt_dev
+    displayName: dbt against the dev database
+    dependsOn: test
+    jobs:
+      - job: pr_schema
+        displayName: Build the PR in its own schema, then drop it
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(PYTHON_VERSION)
+          - script: bash scripts/ci/install_odbc.sh && pip install -r requirements.txt
+            displayName: Install
+          - task: AzureCLI@2
+            displayName: dbt build (target local, schema pr_<id>)
+            inputs:
+              azureSubscription: sc-warehouse-dev
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                export DBT_PROFILES_DIR="$PWD/dbt" DBT_TARGET=local
+                export DBT_SCHEMA="pr_$(System.PullRequest.PullRequestId)"
+                trap 'dbt run-operation drop_schemas_with_prefix --project-dir dbt --args "{prefix: ${DBT_SCHEMA}_}"' EXIT
+                dbt build --project-dir dbt

@@ -1,0 +1,94 @@
+[
+  {
+    "name": "StartJob",
+    "description": "Start one execution of the Container Apps job through the Azure Resource Manager API, as Data Factory's managed identity.",
+    "type": "WebActivity",
+    "dependsOn": [],
+    "policy": { "timeout": "0.00:05:00", "retry": 2, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
+    "typeProperties": {
+      "method": "POST",
+      "url": {
+        "value": "@concat('https://management.azure.com/subscriptions/${subscription_id}/resourceGroups/${resource_group}/providers/Microsoft.App/jobs/', pipeline().parameters.job_name, '/start?api-version=2024-03-01')",
+        "type": "Expression"
+      },
+      "body": "{}",
+      "disableAsyncPattern": true,
+      "authentication": { "type": "MSI", "resource": "https://management.azure.com/" }
+    }
+  },
+  {
+    "name": "RememberExecution",
+    "type": "SetVariable",
+    "dependsOn": [ { "activity": "StartJob", "dependencyConditions": [ "Succeeded" ] } ],
+    "typeProperties": {
+      "variableName": "execution_name",
+      "value": { "value": "@activity('StartJob').output.name", "type": "Expression" }
+    }
+  },
+  {
+    "name": "WaitForJob",
+    "description": "Poll every 30 seconds until the execution stops running. Gives up after 90 minutes.",
+    "type": "Until",
+    "dependsOn": [ { "activity": "RememberExecution", "dependencyConditions": [ "Succeeded" ] } ],
+    "typeProperties": {
+      "expression": {
+        "value": "@not(contains(createArray('Running', 'Processing', 'Unknown'), variables('status')))",
+        "type": "Expression"
+      },
+      "timeout": "0.01:30:00",
+      "activities": [
+        {
+          "name": "Pause",
+          "type": "Wait",
+          "dependsOn": [],
+          "typeProperties": { "waitTimeInSeconds": 30 }
+        },
+        {
+          "name": "GetExecution",
+          "type": "WebActivity",
+          "dependsOn": [ { "activity": "Pause", "dependencyConditions": [ "Succeeded" ] } ],
+          "policy": { "timeout": "0.00:02:00", "retry": 3, "retryIntervalInSeconds": 20, "secureOutput": false, "secureInput": false },
+          "typeProperties": {
+            "method": "GET",
+            "url": {
+              "value": "@concat('https://management.azure.com/subscriptions/${subscription_id}/resourceGroups/${resource_group}/providers/Microsoft.App/jobs/', pipeline().parameters.job_name, '/executions/', variables('execution_name'), '?api-version=2024-03-01')",
+              "type": "Expression"
+            },
+            "authentication": { "type": "MSI", "resource": "https://management.azure.com/" }
+          }
+        },
+        {
+          "name": "RecordStatus",
+          "type": "SetVariable",
+          "dependsOn": [ { "activity": "GetExecution", "dependencyConditions": [ "Succeeded" ] } ],
+          "typeProperties": {
+            "variableName": "status",
+            "value": { "value": "@activity('GetExecution').output.properties.status", "type": "Expression" }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "CheckResult",
+    "type": "IfCondition",
+    "dependsOn": [ { "activity": "WaitForJob", "dependencyConditions": [ "Succeeded" ] } ],
+    "typeProperties": {
+      "expression": { "value": "@equals(variables('status'), 'Succeeded')", "type": "Expression" },
+      "ifFalseActivities": [
+        {
+          "name": "JobDidNotSucceed",
+          "type": "Fail",
+          "dependsOn": [],
+          "typeProperties": {
+            "message": {
+              "value": "@concat('Container Apps job ', pipeline().parameters.job_name, ' execution ', variables('execution_name'), ' ended with status ', variables('status'), '. Logs: ContainerAppConsoleLogs_CL in Log Analytics.')",
+              "type": "Expression"
+            },
+            "errorCode": "JOB_FAILED"
+          }
+        }
+      ]
+    }
+  }
+]
