@@ -67,6 +67,12 @@ run_pipeline() {
   done
 }
 
+step "Starting from empty tables (demo deployment only)"
+(
+  export SQL_SERVER SQL_DATABASE="$DATABASE" SQL_AUTH=cli PYTHONPATH=src
+  .venv-deploy/bin/python -m ingest run-sql scripts/azure/reset_demo.sql
+)
+
 step "Run 1: day one"
 use_day day1
 upload "$DATA"/files/day1/*.csv

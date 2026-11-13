@@ -40,28 +40,36 @@ resource "azurerm_data_factory_linked_service_azure_sql_database" "warehouse" {
 }
 
 # ---- Datasets ----------------------------------------------------------------------
-resource "azurerm_data_factory_dataset_delimited_text" "registrations_file" {
-  for_each            = local.environments
-  name                = "ds_registrations_csv_${each.key}"
-  data_factory_id     = azurerm_data_factory.this.id
-  linked_service_name = azurerm_data_factory_linked_service_azure_blob_storage.landing.name
+# Defined with raw JSON so that rowDelimiter is left out: Data Factory then
+# accepts \r\n, \r or \n on read. The delimited-text resource sends an empty
+# rowDelimiter, which Data Factory rejects at run time.
+resource "azurerm_data_factory_custom_dataset" "registrations_file" {
+  for_each        = local.environments
+  name            = "ds_registrations_file_${each.key}"
+  data_factory_id = azurerm_data_factory.this.id
+  type            = "DelimitedText"
+
+  linked_service {
+    name = azurerm_data_factory_linked_service_azure_blob_storage.landing.name
+  }
 
   parameters = {
     file_name = ""
   }
 
-  azure_blob_storage_location {
-    container                = azurerm_storage_container.landing.name
-    path                     = "${each.key}/incoming/event_registrations"
-    filename                 = "@dataset().file_name"
-    dynamic_filename_enabled = true
-  }
-
-  column_delimiter    = ","
-  quote_character     = "\""
-  escape_character    = "\""
-  first_row_as_header = true
-  encoding            = "UTF-8"
+  type_properties_json = jsonencode({
+    location = {
+      type       = "AzureBlobStorageLocation"
+      container  = azurerm_storage_container.landing.name
+      folderPath = "${each.key}/incoming/event_registrations"
+      fileName   = { value = "@dataset().file_name", type = "Expression" }
+    }
+    columnDelimiter  = ","
+    quoteChar        = "\""
+    escapeChar       = "\""
+    firstRowAsHeader = true
+    encodingName     = "UTF-8"
+  })
 }
 
 resource "azurerm_data_factory_dataset_binary" "incoming_folder" {
@@ -164,7 +172,7 @@ resource "azurerm_data_factory_pipeline" "load_event_files" {
   })
 
   depends_on = [
-    azurerm_data_factory_dataset_delimited_text.registrations_file,
+    azurerm_data_factory_custom_dataset.registrations_file,
     azurerm_data_factory_dataset_binary.incoming_folder,
     azurerm_data_factory_dataset_binary.incoming_file,
     azurerm_data_factory_dataset_binary.archive_file,

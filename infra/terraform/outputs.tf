@@ -41,6 +41,9 @@ output "landing_storage_account" {
 # Database users for the managed identities. Terraform cannot run T-SQL here, so
 # this renders the script; the runbook says when and how to run it.
 output "sql_grants" {
+  # Marked sensitive only to keep it out of the plain `terraform output` listing;
+  # read it with `terraform output -json sql_grants`.
+  sensitive = true
   value = {
     for env in local.environments : env => templatefile("${path.module}/templates/grants.sql.tftpl", {
       env           = env

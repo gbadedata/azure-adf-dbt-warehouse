@@ -31,3 +31,4 @@ def configure(level: str = "INFO") -> None:
     root.handlers[:] = [handler]
     root.setLevel(level)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("azure").setLevel(logging.WARNING)
