@@ -12,7 +12,8 @@ ROOT="$PWD"
 tf() { terraform -chdir=infra/terraform output "$@"; }
 json_field() { python3 -c "import json,sys; print(json.load(sys.stdin)$1)"; }
 
-RG="$(tf -raw resource_group)"
+RG="$(tf -raw resource_group 2>/dev/null)" || { echo "Nothing is deployed yet: run scripts/azure/deploy.sh first." >&2; exit 1; }
+tf -json databases >/dev/null 2>&1 || { echo "The deployment did not finish: run scripts/azure/deploy.sh again." >&2; exit 1; }
 ADF="$(tf -raw data_factory)"
 SUB="$(tf -raw subscription_id)"
 STORAGE="$(tf -raw landing_storage_account)"
