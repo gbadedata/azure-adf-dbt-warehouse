@@ -9,6 +9,9 @@ read -r -p "Type the resource group name to confirm: " answer
 if ! terraform destroy -input=false -auto-approve -var "image=unused" -var "demo_source_image=unused"; then
   echo "terraform destroy did not finish; deleting the resource group directly" >&2
   az group delete --name "$RG" --yes
+  # Everything deploy.sh creates lives in that group, so Terraform's state now
+  # describes nothing; clear it so the next deploy starts clean.
+  rm -f terraform.tfstate terraform.tfstate.backup
 fi
 rm -f terraform.tfvars tfplan grants_*.sql
 echo "Removed. Check Cost Management in a day or two: it should show nothing new."
