@@ -12,7 +12,7 @@ SINCE="$(date -u -d '-6 hours' +%FT%TZ)"; UNTIL="$(date -u -d '+1 hour' +%FT%TZ)
 echo "## Pipeline runs (last 6 hours)"
 az rest --method post --url "$FACTORY/queryPipelineRuns?api-version=2018-06-01" \
   --body "{\"lastUpdatedAfter\":\"$SINCE\",\"lastUpdatedBefore\":\"$UNTIL\"}" \
-  --query "sort_by(value, &runStart)[].{start:runStart, pipeline:pipelineName, status:status, seconds:to_string(durationInMs)}" -o table
+  --query "sort_by(value, &runStart)[].{start:runStart, pipeline:pipelineName, status:status, ms:durationInMs}" -o table
 
 for job in $(tf -json jobs | python3 -c 'import json,sys; print(" ".join(v for k, v in json.load(sys.stdin).items() if k.endswith("prod")))'); do
   echo; echo "## Executions of $job"

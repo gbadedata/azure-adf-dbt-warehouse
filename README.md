@@ -11,7 +11,7 @@
 ![Terraform](https://img.shields.io/badge/Terraform-azurerm%204-7B42BC?logo=terraform&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 
-[Results](#results) · [Architecture](#architecture) · [How a day runs](#how-a-day-runs) · [Environments](#environments) · [What is verified](#what-has-and-has-not-been-verified) · [Runbook](docs/runbook.md) · [Handover](docs/handover.md) · [Decisions](docs/decisions.md)
+[Results](#results) · [In Azure](#deployed-and-run-in-azure) · [Architecture](#architecture) · [How a day runs](#how-a-day-runs) · [Environments](#environments) · [What is verified](#what-has-and-has-not-been-verified) · [Runbook](docs/runbook.md) · [Handover](docs/handover.md) · [Decisions](docs/decisions.md)
 
 </div>
 
@@ -44,7 +44,25 @@ Day 2 donations are exactly what changed in the source: 350 new gifts, 40 refund
 
 The mock API also rate-limited every seventh request; the loader waited out each `Retry-After` and carried on.
 
-**A pass here has a narrow meaning.** I generated the data, so it shows the pipeline does what it claims on that data. It is not a production track record, and Azure itself has not been exercised yet: see [what is verified](#what-has-and-has-not-been-verified).
+**A pass here has a narrow meaning.** I generated the data, so it shows the pipeline does what it claims on that data. It is not a production track record.
+
+## Deployed and run in Azure
+
+On 13 November 2026 the whole thing was deployed into an Azure subscription with [`scripts/azure/deploy.sh`](scripts/azure/deploy.sh), with the synthetic CRM API running as a Container App as the source, and the daily pipeline was run three times: day one, day two, then day two again. Afterwards it was removed. The full record is in [docs/evidence/azure-2026-11-13.md](docs/evidence/azure-2026-11-13.md).
+
+| 3 of 3 | 100 of 100 | 4 of 4 | 0 | 2 min |
+|:---:|:---:|:---:|:---:|:---:|
+| Data Factory daily runs succeeded (each one: API load and file load in parallel, then dbt) | campaign figures in the prod marts matching the source | late-arriving donations caught | rows changed by the replay | from a failed run to the failure alert firing |
+
+The load counts in Azure were identical to CI's. Both Container Apps jobs signed in to Azure SQL with managed identities, Data Factory upserted the files with its own identity, and each file moved to the archive only after its upsert succeeded.
+
+The first deployment found three problems that no CI check could see. [The evidence document](docs/evidence/azure-2026-11-13.md#what-the-first-deployment-found) has the detail; the short version:
+
+- The subscription had never been registered for Container Apps. The deploy script now registers every provider it needs first.
+- Terraform's delimited-text dataset sends an empty row delimiter, which Data Factory rejects only when the Copy activity runs. Terraform validation and the pipeline checks both passed it. The dataset is now raw JSON with the setting left out.
+- Replacing that dataset made Terraform try to delete the old one while a pipeline still used it. Fixed by applying the pipeline change first; the runbook covers it.
+
+The first file-load failure also tested the safety rules for real: dbt did not run, the file stayed in `incoming` for the next run, and the alert fired.
 
 ## Architecture
 
@@ -123,17 +141,18 @@ Changes reach prod through Azure DevOps ([`azure-pipelines`](azure-pipelines)): 
 
 | Part | Status |
 |---|---|
-| API loader: tokens, pagination, retries, watermarks, `MERGE`, run log | Tested: unit tests against the mock API, and integration tests on SQL Server 2022 in CI |
-| File loads: upsert on key, changed-row detection, replay | Tested in CI with the Python loader, which mirrors Data Factory's upsert |
-| dbt project: models, 48 tests, freshness, schema naming, schema clean-up | Tested in CI on SQL Server 2022 |
-| End to end: two days, replay, independent recalculation | Tested in CI on every push |
-| Terraform | `fmt` and `validate` pass against azurerm 4.81 in CI. **Not yet applied** to a subscription |
-| Data Factory pipelines | Static checks in CI (valid JSON, dependencies, every dataset and pipeline reference exists in Terraform, dbt waits for both loads, files archive only after a successful upsert). **Not yet run in Data Factory** |
-| Job image | Builds in CI, both entry points start, ODBC driver present |
+| API loader: tokens, pagination, retries, watermarks, `MERGE`, run log | Tested in CI (unit tests, and integration tests on SQL Server 2022), and **ran in Azure** |
+| File loads: upsert on key, archive after success | Data Factory's Copy upsert **ran in Azure**; the Python equivalent is tested in CI |
+| dbt project: models, 48 tests, freshness, schema naming | Tested in CI, and **ran in Azure** against Azure SQL with a managed identity |
+| End to end: two days, replay, independent recalculation | In CI on every push, and **once in Azure** (13 November 2026) |
+| Terraform | `fmt` and `validate` in CI; **applied** to a subscription in UK South, then destroyed |
+| Data Factory pipelines | Static checks in CI; **ran in Azure**, including one failure that showed dbt is held back and files are kept |
+| Failure alert | **Fired in Azure**, about two minutes after a failed run |
+| "No successful run in 26 hours" alert | Deployed, **not exercised**: the schedules were off for the demonstration |
 | Azure DevOps pipelines | Written to mirror the GitHub workflow step for step. **Not yet run** in an Azure DevOps organisation |
-| Managed-identity sign-in to Azure SQL | Code path present. **Not exercised**; CI uses a SQL login on a local container |
+| Running on a daily schedule for weeks | **Not done.** The deployment lasted an afternoon |
 
-CI runs on SQL Server 2022, the engine Azure SQL Database is built on; every feature used here (`OPENJSON`, `MERGE`, `JSON_VALUE`, `datetimeoffset`, `HASHBYTES`) is supported by both. Deploying it is the next step, and the [runbook](docs/runbook.md#first-deployment) has it in order.
+CI runs on SQL Server 2022, the engine Azure SQL Database is built on; every feature used here (`OPENJSON`, `MERGE`, `JSON_VALUE`, `datetimeoffset`, `HASHBYTES`) is supported by both, and the Azure run gave identical results.
 
 ## Design decisions
 
@@ -151,7 +170,7 @@ The full list, with what would make each one worth revisiting, is in [docs/decis
 
 ## Limits and next steps
 
-- **Not yet deployed.** Everything Azure-side is validated but has not run. The first deployment will find things CI cannot, most likely in permissions.
+- **One afternoon in Azure, not weeks.** It has been deployed, run and removed. How it behaves on a schedule over time, with a real source, is untested.
 - **Network.** The SQL server accepts connections from Azure services. A private endpoint with a managed virtual network in Data Factory is the stricter option.
 - **Secrets.** The CRM client secret is a Container Apps secret set from a Terraform variable. Key Vault references are the next step.
 - **Deletes.** The API reports changes, not deletions. A record deleted at source stays in raw until a periodic full reconciliation is added.
@@ -176,7 +195,16 @@ SQL_PASSWORD='Your-Strong-Passw0rd' bash scripts/run_e2e.sh
 
 It needs Microsoft ODBC Driver 18 ([`scripts/ci/install_odbc.sh`](scripts/ci/install_odbc.sh) installs it on Ubuntu).
 
-**In Azure:** follow [docs/runbook.md](docs/runbook.md#first-deployment).
+**In Azure, as a self-contained demonstration** (about 20 minutes to deploy, 15 to run, a pound or two if removed the same day):
+
+```bash
+ALERT_EMAILS=you@example.org bash scripts/azure/deploy.sh   # asks before creating anything
+bash scripts/azure/demo_run.sh                              # three daily runs, then the independent check
+bash scripts/azure/evidence.sh                              # pipeline runs, job executions, alerts fired
+bash scripts/azure/teardown.sh                              # removes everything
+```
+
+`deploy.sh` needs the Azure CLI, Terraform and Python; it builds the images in Azure, so Docker is not required. For a real source instead of the demo CRM, follow [docs/runbook.md](docs/runbook.md#first-deployment).
 
 ## Repository layout
 
@@ -190,8 +218,9 @@ azure-pipelines/     Azure DevOps CI (pull requests) and CD (dev, then prod with
 .github/workflows/   The same checks on GitHub Actions
 mock_api/            Synthetic source data and a stand-in CRM API
 scripts/             End-to-end run, independent check, helpers
+scripts/azure/       Deploy, demonstrate, record evidence and tear down in your own subscription
 tests/               Unit, pipeline-definition and SQL Server integration tests
-docs/                Runbook, handover pack, decisions
+docs/                Runbook, handover pack, decisions, evidence from the Azure run
 ```
 
 ---

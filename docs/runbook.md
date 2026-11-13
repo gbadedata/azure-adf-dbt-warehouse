@@ -113,6 +113,17 @@ Add tests with the model: at least `unique` and `not_null` on its key. If a new 
 
 **A new file feed:** a raw table, a delimited-text dataset and an upsert Copy activity in Terraform following `load_event_files`, and a staging model. Agree the column list with whoever produces the file, and write it down.
 
+### Changing Data Factory datasets
+
+Data Factory refuses to delete a dataset that a pipeline still uses. If a change replaces a dataset (a new name or a new resource type), apply the pipeline change first, then the rest:
+
+```bash
+bash scripts/azure/update_infra.sh -target=azurerm_data_factory_pipeline.load_event_files
+bash scripts/azure/update_infra.sh
+```
+
+`update_infra.sh` keeps the images that are already deployed, so it does not rebuild anything.
+
 ## Access
 
 | Who | Gets | How |
@@ -136,7 +147,7 @@ Then update `TF_VAR_crm_client_secret` wherever Terraform runs, so the next `ter
 
 ## First deployment
 
-In this order. Steps 1 to 4 once; 5 onwards whenever you set up a new subscription.
+For a self-contained demonstration with the synthetic CRM, `scripts/azure/deploy.sh` does steps 1 to 5 in one go (see the README). For a real source, in this order:
 
 1. **Prerequisites.** Azure CLI signed in, Terraform 1.6 or later, an Entra group for SQL administrators, and the CRM's API URL and client credentials.
 2. **Infrastructure.**
