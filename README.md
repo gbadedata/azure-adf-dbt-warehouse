@@ -27,6 +27,17 @@ Deployed to Azure on 13 November 2026, run three times (day one, day two, then d
 |:---:|:---:|:---:|:---:|:---:|
 | daily Data Factory runs succeeded | campaign figures in the prod marts matching an independent recalculation from the source | late-arriving donations caught | rows changed by the replayed day | from a failed run to the alert firing |
 
+<table>
+<tr>
+<td><img src="docs/images/adf-good-run.png" alt="Data Factory run: LoadCrmApi and LoadEventFiles succeed, then BuildDbt succeeds"></td>
+<td><img src="docs/images/adf-failed-run.png" alt="Data Factory run: LoadEventFiles fails, so BuildDbt never starts"></td>
+</tr>
+<tr>
+<td align="center">A normal day: both loads succeed, then dbt builds</td>
+<td align="center">A bad file: the file load fails, so dbt never starts and the reports keep the last good data</td>
+</tr>
+</table>
+
 The same checks run in CI on every push, against SQL Server 2022, and give identical numbers ([CI run log](docs/evidence/ci-end-to-end.md)).
 
 **The late donations are the hard part.** Four donations are stamped eight minutes *before* the day-one high watermark but only become visible on day two, as happens when a source commits late. A loader that asks for "everything after the watermark" never sees them. This one re-reads a 30-minute overlap, and the merge only accepts strictly newer versions, so the overlap re-reads one row and loses nothing. [A test](tests/test_pipeline.py) shows the same load without the overlap losing exactly those four.
