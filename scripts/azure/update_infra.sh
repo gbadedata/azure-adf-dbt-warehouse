@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Apply infrastructure changes after `git pull`, keeping the images that are
 # already deployed (no rebuild). Shows the plan and asks before applying.
+# Extra arguments go to `terraform plan`, for example
+#   bash scripts/azure/update_infra.sh -target=azurerm_data_factory_pipeline.load_event_files
 set -euo pipefail
 export AZURE_EXTENSION_USE_DYNAMIC_INSTALL=yes_without_prompt
 cd "$(dirname "$0")/../../infra/terraform"
@@ -22,7 +24,7 @@ mapfile -t images < <(read_images)
 echo "keeping job image : ${images[0]}"
 echo "keeping demo image: ${images[1]:-(none)}"
 terraform init -input=false >/dev/null
-terraform plan -input=false -out tfplan -var "image=${images[0]}" -var "demo_source_image=${images[1]}"
+terraform plan -input=false -out tfplan -var "image=${images[0]}" -var "demo_source_image=${images[1]}" "$@"
 read -r -p "Apply this plan? [y/N] " answer
 [ "$answer" = "y" ] || { echo "stopped"; exit 1; }
 terraform apply -input=false tfplan
