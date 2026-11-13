@@ -21,8 +21,8 @@ jobs:
     name: Lint, unit tests, pipeline checks, dbt parse
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -65,8 +65,8 @@ jobs:
       SQLSERVER_TEST_PASSWORD: CiPassw0rd2026x
       RUN_ID: ${{ github.run_id }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -78,7 +78,7 @@ jobs:
         run: bash scripts/run_e2e.sh
       - name: Keep the evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: end-to-end-results
           path: |
@@ -94,8 +94,8 @@ jobs:
       run:
         working-directory: infra/terraform
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.9.8"
       - run: terraform fmt -check -recursive -diff
@@ -106,7 +106,7 @@ jobs:
     name: Build the job image and smoke-test it
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker build -t warehouse:ci .
       - name: Both entry points start
         run: |
