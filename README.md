@@ -2,67 +2,71 @@
 
 # Azure Data Factory, dbt and Azure SQL warehouse
 
-**A warehouse foundation that a small analytics team can run after the engineer who built it has left: loads that run on time and are provably right, dbt with separate dev and prod environments, Data Factory starting dbt only after the loads succeed, alerts when anything fails or goes quiet, and a runbook.**
+**A charity data warehouse on Azure, built to keep running after the engineer who built it has gone.**
 
 [![ci](https://github.com/gbadedata/azure-adf-dbt-warehouse/actions/workflows/ci.yml/badge.svg)](https://github.com/gbadedata/azure-adf-dbt-warehouse/actions/workflows/ci.yml)
-![Azure Data Factory](https://img.shields.io/badge/Azure-Data%20Factory-0078D4?logo=microsoftazure&logoColor=white)
-![Azure SQL](https://img.shields.io/badge/Azure-SQL%20Database-0078D4?logo=microsoftsqlserver&logoColor=white)
+[![Deployed to Azure](https://img.shields.io/badge/deployed%20to%20Azure-13%20Nov%202026-0078D4?logo=microsoftazure&logoColor=white)](docs/evidence/azure-2026-11-13.md)
 ![dbt](https://img.shields.io/badge/dbt%20Core-1.12-FF694B?logo=dbt&logoColor=white)
 ![Terraform](https://img.shields.io/badge/Terraform-azurerm%204-7B42BC?logo=terraform&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-[Results](#results) · [In Azure](#deployed-and-run-in-azure) · [Architecture](#architecture) · [How a day runs](#how-a-day-runs) · [Environments](#environments) · [What is verified](#what-has-and-has-not-been-verified) · [Runbook](docs/runbook.md) · [Handover](docs/handover.md) · [Decisions](docs/decisions.md)
+[Proof](#proof) · [Quick start](#quick-start) · [Architecture](#architecture) · [How a day runs](#how-a-day-runs) · [Cost](#what-it-costs) · [What is verified](#what-has-and-has-not-been-verified) · [Runbook](docs/runbook.md) · [Handover](docs/handover.md) · [Decisions](docs/decisions.md)
 
 </div>
 
-The data is a charity's: supporters, donations and campaigns from a CRM's REST API, and event registrations exported as CSV files. All of it is **synthetic** and generated from a fixed seed. No real organisation or person is involved.
+Data Factory loads a supporter CRM's REST API and an events platform's CSV exports into Azure SQL. dbt turns them into reporting tables in separate dev and prod databases, and Azure Monitor emails the team when a run fails or when no run succeeds for a day. Everything is in Terraform, every service signs in with a managed identity, and the runbook and handover pack are written for the analysts who look after it next.
 
-## Results
+The data is **synthetic**, generated from a fixed seed. No real organisation or person is involved.
 
-From the CI run on 13 November 2026, against SQL Server 2022: two days of source data loaded incrementally, the second day replayed, `dbt build`, then every campaign figure recomputed from the source files in plain Python and compared with the warehouse.
+## Proof
 
-| 100 of 100 | 4 of 4 | 59 of 59 | 0 |
-|:---:|:---:|:---:|:---:|
-| campaign figures matching the source exactly | late-arriving donations caught by the overlap window | dbt models and tests passed | rows changed when the whole day was loaded a second time |
-
-What each load did, from the run log (`ctl.ingestion_runs`):
-
-| Load | Requested since | Received | Inserted | Updated | Unchanged | 429s retried |
-|---|---|---:|---:|---:|---:|---:|
-| Day 1 campaigns | everything | 10 | 10 | 0 | 0 | 0 |
-| Day 1 supporters | everything | 2,400 | 2,400 | 0 | 0 | 4 |
-| Day 1 donations | everything | 7,179 | 7,179 | 0 | 0 | 12 |
-| Day 1 event file | (file) | 300 | 300 | 0 | 0 | - |
-| Day 2 campaigns | watermark - 30 min | 1 | 0 | 1 | 0 | 0 |
-| Day 2 supporters | watermark - 30 min | 151 | 120 | 30 | 1 | 0 |
-| Day 2 donations | watermark - 30 min | 420 | 354 | 65 | 1 | 1 |
-| Day 2 event file | (file) | 85 | 60 | 5 | 20 | - |
-| Replay, all three entities | new watermark - 30 min | 19 | 0 | 0 | 19 | 0 |
-| Replay, event file | (file) | 85 | 0 | 0 | 85 | - |
-
-Day 2 donations are exactly what changed in the source: 350 new gifts, 40 refunds and 25 pending gifts that cleared, plus **4 late commits**: donations stamped eight minutes *before* the day-one high watermark that only became visible on day two. A loader that asks for "everything after the watermark" never sees them. This one re-reads a 30-minute overlap, and the merge only accepts strictly newer versions, so the overlap costs one re-read row and loses nothing. [A unit test](tests/test_pipeline.py) shows the same day loaded with no overlap losing exactly those four.
-
-The mock API also rate-limited every seventh request; the loader waited out each `Retry-After` and carried on.
-
-**A pass here has a narrow meaning.** I generated the data, so it shows the pipeline does what it claims on that data. It is not a production track record.
-
-## Deployed and run in Azure
-
-On 13 November 2026 the whole thing was deployed into an Azure subscription with [`scripts/azure/deploy.sh`](scripts/azure/deploy.sh), with the synthetic CRM API running as a Container App as the source, and the daily pipeline was run three times: day one, day two, then day two again. Afterwards it was removed. The full record is in [docs/evidence/azure-2026-11-13.md](docs/evidence/azure-2026-11-13.md).
+Deployed to Azure on 13 November 2026, run three times (day one, day two, then day two again), checked against the source, then removed. [Full record](docs/evidence/azure-2026-11-13.md).
 
 | 3 of 3 | 100 of 100 | 4 of 4 | 0 | 2 min |
 |:---:|:---:|:---:|:---:|:---:|
-| Data Factory daily runs succeeded (each one: API load and file load in parallel, then dbt) | campaign figures in the prod marts matching the source | late-arriving donations caught | rows changed by the replay | from a failed run to the failure alert firing |
+| daily Data Factory runs succeeded | campaign figures in the prod marts matching an independent recalculation from the source | late-arriving donations caught | rows changed by the replayed day | from a failed run to the alert firing |
 
-The load counts in Azure were identical to CI's. Both Container Apps jobs signed in to Azure SQL with managed identities, Data Factory upserted the files with its own identity, and each file moved to the archive only after its upsert succeeded.
+The same checks run in CI on every push, against SQL Server 2022, and give identical numbers ([CI run log](docs/evidence/ci-end-to-end.md)).
 
-The first deployment found three problems that no CI check could see. [The evidence document](docs/evidence/azure-2026-11-13.md#what-the-first-deployment-found) has the detail; the short version:
+**The late donations are the hard part.** Four donations are stamped eight minutes *before* the day-one high watermark but only become visible on day two, as happens when a source commits late. A loader that asks for "everything after the watermark" never sees them. This one re-reads a 30-minute overlap, and the merge only accepts strictly newer versions, so the overlap re-reads one row and loses nothing. [A test](tests/test_pipeline.py) shows the same load without the overlap losing exactly those four.
 
-- The subscription had never been registered for Container Apps. The deploy script now registers every provider it needs first.
-- Terraform's delimited-text dataset sends an empty row delimiter, which Data Factory rejects only when the Copy activity runs. Terraform validation and the pipeline checks both passed it. The dataset is now raw JSON with the setting left out.
-- Replacing that dataset made Terraform try to delete the old one while a pipeline still used it. Fixed by applying the pipeline change first; the runbook covers it.
+**A failure was tested for real.** In the first deployment a file load failed. dbt was held back, so the reports kept the last good data; the file stayed in `incoming` for the next run; and the failure alert fired two minutes later.
 
-The first file-load failure also tested the safety rules for real: dbt did not run, the file stayed in `incoming` for the next run, and the alert fired.
+**The first deployment found three problems no CI check could see**, each now fixed:
+
+- the subscription had never been registered for Container Apps, so `deploy.sh` now registers every provider it needs first;
+- Terraform's delimited-text dataset sends an empty row delimiter, which Data Factory rejects only when the Copy activity runs, so the dataset is now raw JSON without it;
+- replacing that dataset made Terraform delete it while a pipeline still used it, which the runbook now covers.
+
+A pass on synthetic data has a narrow meaning: the pipeline does what it claims on that data. It is not a production track record.
+
+## Quick start
+
+**Tests, no database** (Python 3.11 or later):
+
+```bash
+pip install -r requirements-dev.txt && pytest -m "not sqlserver"
+```
+
+**End to end against SQL Server 2022**: two days of loads, a replay, `dbt build`, then the independent check. Needs ODBC Driver 18 ([installer for Ubuntu](scripts/ci/install_odbc.sh)).
+
+```bash
+docker run -d -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD='Your-Strong-Passw0rd' -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+SQL_PASSWORD='Your-Strong-Passw0rd' bash scripts/run_e2e.sh
+```
+
+**In your own Azure subscription**: needs the Azure CLI, Terraform and Python. Images are built in Azure, so Docker is not required.
+
+```bash
+ALERT_EMAILS=you@example.org bash scripts/azure/deploy.sh   # about 20 minutes; asks before creating anything
+bash scripts/azure/demo_failure.sh                          # a bad file: dbt held back, file kept, alert fires
+bash scripts/azure/demo_run.sh                              # three daily runs, then the independent check
+bash scripts/azure/evidence.sh                              # pipeline runs, job executions, alerts fired
+bash scripts/azure/teardown.sh                              # removes everything
+```
+
+For a real source instead of the demo CRM, follow [the runbook](docs/runbook.md#first-deployment).
 
 ## Architecture
 
@@ -95,116 +99,88 @@ flowchart LR
     ADF -. failed run, or no success in 26 h .-> ALERT["Azure Monitor alert<br/>email the data team"]
 ```
 
-Everything is in Terraform ([`infra/terraform`](infra/terraform)): the SQL server with a serverless database per environment, landing storage, Data Factory with its linked services, datasets, pipelines and triggers, the Container Apps jobs and registry, Log Analytics, and the alerts. Every service signs in with a managed identity. There are no keys or passwords in the code or in Data Factory; SQL logins are disabled on the server.
+[`infra/terraform`](infra/terraform) creates all of it: the SQL server with a serverless database per environment, landing storage, Data Factory with its linked services, datasets, pipelines and triggers, the Container Apps jobs and registry, Log Analytics and the alerts. There are no keys or passwords in the code or in Data Factory, and SQL logins are disabled on the server.
 
 ## How a day runs
 
-1. **06:10 UTC**: the schedule trigger starts `pl_daily_prod`.
-2. **In parallel:**
-   - `LoadCrmApi` starts the ingest job and waits for it. For campaigns, supporters and donations it asks the API for everything changed since the high watermark minus 30 minutes, follows the cursor through every page, retries 429s (honouring `Retry-After`) and 5xx responses with backoff, and `MERGE`s each page into `raw`. The watermark moves only once every page is in. A failure leaves it where it was, so the next run simply repeats the work.
-   - `LoadEventFiles` lists `prod/incoming/event_registrations/`, upserts each CSV into `raw.event_registrations` on `registration_id`, and only after a successful upsert moves the file to `prod/archive/yyyy/MM/dd/`. A file that fails stays in `incoming` for the next run.
-3. `BuildDbt` runs **only if both loads succeeded**: `dbt source freshness` (fails if a source has not loaded for 50 hours), then `dbt build`, which builds every model and runs every test. A failed test fails the job.
-4. Any failure fails the pipeline, which fires the **failed-run alert**. If prod has had no successful run for 26 hours, for example because the trigger was switched off, a **silence alert** fires too.
+1. **06:10 UTC.** The schedule trigger starts `pl_daily_prod`.
+2. **Two loads in parallel.**
+   - **API.** The ingest job asks the CRM for everything changed since the high watermark minus 30 minutes, follows the cursor through every page, waits out 429s (honouring `Retry-After`), backs off on 5xx, and `MERGE`s each page into `raw`. The watermark moves only after the last page, so a failed run is simply repeated.
+   - **Files.** Data Factory upserts each new CSV into `raw.event_registrations` on `registration_id`, and only then moves the file to the archive. A file that fails stays where it is.
+3. **dbt, only if both loads succeeded.** `dbt source freshness` (fails if a source is 50 hours stale), then `dbt build`. A failed test fails the run, and the marts keep the last good data.
+4. **Alerts.** Any failure fires the failed-run alert. No successful prod run for 26 hours, for example because the trigger was switched off, fires the silence alert.
 
-The orchestration is in [`adf/pipelines`](adf/pipelines). Data Factory starts each job through the Azure Resource Manager API as its own managed identity, then polls the execution every 30 seconds ([`run_job.json.tftpl`](adf/pipelines/run_job.json.tftpl)).
+Data Factory starts each job through the Azure Resource Manager API with its own managed identity and polls until it finishes ([`run_job.json.tftpl`](adf/pipelines/run_job.json.tftpl)).
 
 ## Environments
 
 | Target | Database | Schemas | Signs in as | Used by |
 |---|---|---|---|---|
 | `local` | dev | `dbt_<you>_staging`, `dbt_<you>_marts`, ... | you, through `az login` | an analyst developing a model |
-| `ci` | throwaway | `ci_<run>_...`, dropped after the run | SQL login on a CI container | every push, in GitHub Actions and Azure DevOps |
+| `ci` | throwaway | `ci_<run>_...`, dropped afterwards | SQL login on a CI container | every push |
 | `dev` | `sqldb-warehouse-dev` | `staging`, `intermediate`, `marts` | the dev jobs' managed identity | the deployed dev environment |
 | `prod` | `sqldb-warehouse-prod` | `staging`, `intermediate`, `marts` | the prod jobs' managed identity | the deployed prod environment |
 
-Dev and prod are separate databases, so a model in development can never overwrite a production table. The schema rule is one macro, [`generate_schema_name`](dbt/macros/generate_schema_name.sql).
-
-Changes reach prod through Azure DevOps ([`azure-pipelines`](azure-pipelines)): a pull request runs the tests, the end-to-end check, and `dbt build` against the dev database in a throwaway `pr_<id>` schema that is dropped afterwards. Merging builds the image once, deploys it to dev and proves it with a real dbt run there, then waits for **approval** before deploying the same image to prod.
+Dev and prod are separate databases, so development can never overwrite a production table. The [Azure DevOps pipelines](azure-pipelines) run `dbt build` for each pull request in a throwaway `pr_<id>` schema, build the image once on merge, prove it in dev with a real dbt run, then wait for **approval** before prod.
 
 ## The warehouse
 
 | Model | Grain | Notes |
 |---|---|---|
-| `fct_donations` | donation | Latest state. `net_amount_gbp` counts paid gifts only; a refund sets it to zero. Gift Aid at 25p per £1 on eligible paid gifts. |
-| `fct_event_registrations` | registration | Matched to supporters on a hashed email; unmatched sign-ups keep a null `supporter_id` instead of being dropped. |
+| `fct_donations` | donation | Latest state. `net_amount_gbp` counts paid gifts only. Gift Aid at 25p per £1 on eligible paid gifts. |
+| `fct_event_registrations` | registration | Matched to supporters on a hashed email; sign-ups from people not in the CRM are kept. |
 | `dim_supporters` | supporter | Giving totals. No email, name or hash. |
 | `dim_campaigns` | campaign | Budget, channel, dates. |
 | `mart_campaign_performance` | campaign | Supporters acquired, donors, gross, refunds, net, Gift Aid, pending, event sign-ups, cost per supporter, income per pound spent. |
 
-48 tests guard it, including three that check the whole rather than a column:
+48 tests guard it, three of which check the whole rather than a column:
 
-- **[No personal data in marts](dbt/tests/assert_no_personal_data_in_marts.sql):** fails if any marts column looks like an email, phone, name or address. Analysts are granted `marts` only; staging, which holds email addresses, is limited to the transformation identity.
-- **[Rows reconcile to raw](dbt/tests/assert_rows_reconcile_to_raw.sql):** every donation, supporter and registration in raw is in the marts, and nothing extra.
-- **[Campaign totals reconcile](dbt/tests/assert_campaign_totals_reconcile.sql):** the campaign report adds up to the donations it summarises.
+- [**no personal data in marts**](dbt/tests/assert_no_personal_data_in_marts.sql): analysts are granted `marts` only, and staging, which holds emails, is restricted;
+- [**rows reconcile to raw**](dbt/tests/assert_rows_reconcile_to_raw.sql): nothing lost or invented between raw and marts;
+- [**campaign totals reconcile**](dbt/tests/assert_campaign_totals_reconcile.sql): the report adds up to the donations behind it.
+
+## What it costs
+
+An estimate for prod running daily with dev idle, from pay-as-you-go list prices in US dollars before VAT. Prices vary by region and change, so check the [pricing calculator](https://azure.microsoft.com/pricing/calculator/).
+
+| Item | Assumption | Per month |
+|---|---|---:|
+| Azure SQL, prod compute | Online about 65 minutes a day: 5 minutes of work, then the 60-minute auto-pause delay. [Billed](https://learn.microsoft.com/azure/azure-sql/database/serverless-tier-billing) at 0.67 to 1 vCore (the higher of CPU and memory used, never below the minimum) at $0.000145 per vCore-second | $11 to $17 |
+| Azure SQL, dev compute | Paused unless someone is developing | $0 |
+| Azure SQL storage | Two databases, 5 GB maximum each | about $1 |
+| [Container Registry](https://azure.microsoft.com/pricing/details/container-registry/), Basic | Always on, $0.167 a day | $5 |
+| [Data Factory](https://azure.microsoft.com/pricing/details/data-factory/data-pipeline/) orchestration | About 40 activity runs a day (each 30-second poll of a job counts), $1 per 1,000 | about $1 |
+| Data Factory data movement | Two small copies a day, each billed as at least a minute at 4 DIUs, $0.25 per DIU-hour | about $1 |
+| [Container Apps](https://learn.microsoft.com/azure/container-apps/billing) jobs | About 4 minutes a day at 0.5 vCPU and 1 GiB | $0, inside the monthly free grant |
+| [Log Analytics and alerts](https://azure.microsoft.com/pricing/details/monitor/) | Far under the free 5 GB a month; one hourly log alert, one metric alert | under $1 |
+| **Total** | | **about $20 to $26** |
+
+The biggest lever is the auto-pause delay. The database keeps billing for the hour it waits after the run; at the 15-minute minimum it would be online about 20 minutes a day, and the total would fall to around $12 to $14. The registry is the largest fixed cost after that.
 
 ## What has and has not been verified
 
 | Part | Status |
 |---|---|
-| API loader: tokens, pagination, retries, watermarks, `MERGE`, run log | Tested in CI (unit tests, and integration tests on SQL Server 2022), and **ran in Azure** |
-| File loads: upsert on key, archive after success | Data Factory's Copy upsert **ran in Azure**; the Python equivalent is tested in CI |
-| dbt project: models, 48 tests, freshness, schema naming | Tested in CI, and **ran in Azure** against Azure SQL with a managed identity |
-| End to end: two days, replay, independent recalculation | In CI on every push, and **once in Azure** (13 November 2026) |
-| Terraform | `fmt` and `validate` in CI; **applied** to a subscription in UK South, then destroyed |
-| Data Factory pipelines | Static checks in CI; **ran in Azure**, including one failure that showed dbt is held back and files are kept |
-| Failure alert | **Fired in Azure**, about two minutes after a failed run |
-| "No successful run in 26 hours" alert | Deployed, **not exercised**: the schedules were off for the demonstration |
-| Azure DevOps pipelines | Written to mirror the GitHub workflow step for step. **Not yet run** in an Azure DevOps organisation |
-| Running on a daily schedule for weeks | **Not done.** The deployment lasted an afternoon |
+| API loader: tokens, pagination, retries, watermarks, `MERGE`, run log | CI (unit, and integration on SQL Server 2022), and **ran in Azure** |
+| File loads: upsert on key, archive only after success | Data Factory's upsert **ran in Azure**; the Python equivalent is tested in CI |
+| dbt: models, 48 tests, freshness, schema naming | CI, and **ran in Azure** against Azure SQL with a managed identity |
+| End to end: two days, replay, independent recalculation | CI on every push, and **once in Azure** |
+| Terraform | `fmt` and `validate` in CI; **applied** in UK South, then destroyed |
+| Data Factory pipelines | Static checks in CI; **ran in Azure**, including a failure that held dbt back and kept the file |
+| Failure alert | **Fired in Azure**, two minutes after a failed run |
+| Silence alert (no success in 26 hours) | Deployed, **not exercised**: the schedules were off for the demonstration |
+| Azure DevOps pipelines | Written to mirror the GitHub workflow; **not yet run** in an Azure DevOps organisation |
+| Weeks on a daily schedule, with a real source | **Not done**: the deployment lasted an afternoon |
 
-CI runs on SQL Server 2022, the engine Azure SQL Database is built on; every feature used here (`OPENJSON`, `MERGE`, `JSON_VALUE`, `datetimeoffset`, `HASHBYTES`) is supported by both, and the Azure run gave identical results.
+## Decisions and limits
 
-## Design decisions
+Three decisions do most of the work. [docs/decisions.md](docs/decisions.md) has all twelve, each with its trade-off and when to revisit it.
 
-The full list, with what would make each one worth revisiting, is in [docs/decisions.md](docs/decisions.md).
+- **API records land as JSON and dbt types them**, so a new source field never breaks a load.
+- **Re-read an overlap, merge only newer versions, move the watermark last**, so late records are caught and any page, run or day can be replayed safely.
+- **Python in Container Apps jobs, started by Data Factory.** Data Factory has no native step for an OAuth-and-cursor API or for dbt; one job pattern runs both, while scheduling and alerts stay in Data Factory.
 
-| Decision | Why | Trade-off |
-|---|---|---|
-| API records land as JSON; dbt types them | A new field in the source never breaks a load | Typing moves to staging, and a bad value shows as a failed test, not a failed load |
-| Re-read a 30-minute overlap on every incremental run | Catches rows committed late with an earlier timestamp | A handful of rows are read twice; the merge ignores them |
-| Merge only strictly newer versions | Replaying a page, a run or a day is harmless | Needs a reliable `updated_at` from the source |
-| Move the watermark only after the last page | A failed run is repeated in full, never half-applied | A long run that fails late repeats its work |
-| Python in Container Apps jobs, started by Data Factory | Data Factory has no native step for OAuth-plus-cursor APIs or dbt; one pattern runs both, and scheduling and alerts stay in one place | Two moving parts instead of one |
-| Separate databases for dev and prod | Development cannot touch production tables, and grants differ per environment | Dev needs its own loads |
-| Alert on silence as well as failure | A disabled trigger fails nothing | One more alert to own |
-
-## Limits and next steps
-
-- **One afternoon in Azure, not weeks.** It has been deployed, run and removed. How it behaves on a schedule over time, with a real source, is untested.
-- **Network.** The SQL server accepts connections from Azure services. A private endpoint with a managed virtual network in Data Factory is the stricter option.
-- **Secrets.** The CRM client secret is a Container Apps secret set from a Terraform variable. Key Vault references are the next step.
-- **Deletes.** The API reports changes, not deletions. A record deleted at source stays in raw until a periodic full reconciliation is added.
-- **File order.** If two exports with the same registration wait in `incoming` at once, the order Data Factory lists them in decides which version stays. Exports arrive daily, so this has not been handled.
-- **Synthetic data.** Real source systems will have quirks this one does not.
-
-## Run it
-
-**The tests, with no database** (Python 3.11 or later):
-
-```bash
-pip install -r requirements-dev.txt
-pytest -m "not sqlserver"
-```
-
-**End to end, against any SQL Server 2022** (a container is fine):
-
-```bash
-docker run -d -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD='Your-Strong-Passw0rd' -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
-SQL_PASSWORD='Your-Strong-Passw0rd' bash scripts/run_e2e.sh
-```
-
-It needs Microsoft ODBC Driver 18 ([`scripts/ci/install_odbc.sh`](scripts/ci/install_odbc.sh) installs it on Ubuntu).
-
-**In Azure, as a self-contained demonstration** (about 20 minutes to deploy, 15 to run, a pound or two if removed the same day):
-
-```bash
-ALERT_EMAILS=you@example.org bash scripts/azure/deploy.sh   # asks before creating anything
-bash scripts/azure/demo_run.sh                              # three daily runs, then the independent check
-bash scripts/azure/evidence.sh                              # pipeline runs, job executions, alerts fired
-bash scripts/azure/teardown.sh                              # removes everything
-```
-
-`deploy.sh` needs the Azure CLI, Terraform and Python; it builds the images in Azure, so Docker is not required. For a real source instead of the demo CRM, follow [docs/runbook.md](docs/runbook.md#first-deployment).
+Known limits: deletions at source are not detected, because the API reports changes only; SQL accepts connections from Azure services rather than through a private endpoint; the CRM secret is a Container Apps secret rather than a Key Vault reference; and if two exports of the same registration wait in `incoming` together, which version wins is not guaranteed.
 
 ## Repository layout
 
@@ -217,10 +193,10 @@ infra/terraform/     All Azure resources, and the SQL grants script as an output
 azure-pipelines/     Azure DevOps CI (pull requests) and CD (dev, then prod with approval)
 .github/workflows/   The same checks on GitHub Actions
 mock_api/            Synthetic source data and a stand-in CRM API
-scripts/             End-to-end run, independent check, helpers
+scripts/             End-to-end run and independent check
 scripts/azure/       Deploy, demonstrate, record evidence and tear down in your own subscription
 tests/               Unit, pipeline-definition and SQL Server integration tests
-docs/                Runbook, handover pack, decisions, evidence from the Azure run
+docs/                Runbook, handover pack, decisions, evidence from CI and Azure
 ```
 
 ---

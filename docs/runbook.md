@@ -177,6 +177,6 @@ For a self-contained demonstration with the synthetic CRM, `scripts/azure/deploy
 
 ## Costs and switching it off
 
-The databases are serverless: they pause after an hour idle and are billed per second while running. Data Factory bills per activity run, Container Apps jobs per second of execution, and the registry and Log Analytics are small fixed costs. Set a budget alert on the resource group.
+The databases are serverless: they pause after an hour idle and are billed per second while running. Data Factory bills per activity run, Container Apps jobs per second of execution, and the registry and Log Analytics are small fixed costs. The README has [a monthly estimate](../README.md#what-it-costs), about $20 to $26 at list prices, most of it the prod database's hour of waiting before it pauses. To cut that, lower `auto_pause_delay_in_minutes` in `infra/terraform/main.tf` (15 is the minimum). Set a budget alert on the resource group.
 
 To remove everything: `terraform destroy` in `infra/terraform`. The databases go with it, so export anything you need first.
