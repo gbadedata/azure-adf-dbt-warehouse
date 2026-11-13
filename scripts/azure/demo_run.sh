@@ -9,22 +9,11 @@ set -euo pipefail
 export AZURE_EXTENSION_USE_DYNAMIC_INSTALL=yes_without_prompt
 cd "$(dirname "$0")/../.."
 ROOT="$PWD"
-tf() { terraform -chdir=infra/terraform output "$@"; }
-json_field() { python3 -c "import json,sys; print(json.load(sys.stdin)$1)"; }
-
-RG="$(tf -raw resource_group 2>/dev/null)" || { echo "Nothing is deployed yet: run scripts/azure/deploy.sh first." >&2; exit 1; }
-tf -json databases >/dev/null 2>&1 || { echo "The deployment did not finish: run scripts/azure/deploy.sh again." >&2; exit 1; }
-ADF="$(tf -raw data_factory)"
-SUB="$(tf -raw subscription_id)"
-STORAGE="$(tf -raw landing_storage_account)"
-SQL_SERVER="$(tf -raw sql_server)"
-DATABASE="$(tf -json databases | json_field "['prod']")"
+source scripts/azure/lib.sh
 APP="$(tf -json demo_source | json_field "['app']")"
 SOURCE_URL="$(tf -json demo_source | json_field "['url']")"
-FACTORY="https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.DataFactory/factories/$ADF"
 DATA="data/generated"
 python3 scripts/generate_data.py --out "$DATA" >/dev/null
-step() { printf '\n==> %s\n' "$*"; }
 
 use_day() {  # day1 | day2: point the demo CRM at that day's data and wait until it serves it
   local want
@@ -38,33 +27,6 @@ use_day() {  # day1 | day2: point the demo CRM at that day's data and wait until
   done
   echo "the demo source did not switch to $1" >&2
   exit 1
-}
-
-upload() {
-  az storage blob upload --auth-mode login --account-name "$STORAGE" --container-name landing \
-    --name "prod/incoming/event_registrations/$(basename "$1")" --file "$1" --overwrite -o none
-  echo "uploaded $(basename "$1")"
-}
-
-show_failures() {
-  az rest --method post --url "$FACTORY/pipelineruns/$1/queryActivityruns?api-version=2018-06-01" \
-    --body "{\"lastUpdatedAfter\":\"$(date -u -d '-6 hours' +%FT%TZ)\",\"lastUpdatedBefore\":\"$(date -u -d '+1 hour' +%FT%TZ)\"}" \
-    --query "value[?status=='Failed'].{activity:activityName, error:error.message}" -o json
-}
-
-run_pipeline() {
-  local run status
-  run="$(az rest --method post --url "$FACTORY/pipelines/pl_daily_prod/createRun?api-version=2018-06-01" --body '{}' --query runId -o tsv)"
-  echo "pl_daily_prod run $run"
-  while :; do
-    sleep 30
-    status="$(az rest --method get --url "$FACTORY/pipelineruns/$run?api-version=2018-06-01" --query status -o tsv)"
-    echo "  $(date +%H:%M:%S)  $status"
-    case "$status" in
-      Succeeded) return 0 ;;
-      Failed|Cancelled) show_failures "$run"; exit 1 ;;
-    esac
-  done
 }
 
 step "Starting from empty tables (demo deployment only)"
